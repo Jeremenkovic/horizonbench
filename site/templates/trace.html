@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Trace: {{ task_id }} | HorizonBench{% endblock %}
+{% block content %}
+
+<div class="mb-2">
+  <a href="javascript:history.back()" class="text-gray-500 hover:text-gray-300 text-sm">← Back</a>
+</div>
+
+<div class="mb-6 flex items-start justify-between flex-wrap gap-4">
+  <div>
+    <h1 class="text-xl font-bold text-white font-mono">{{ task_id }}</h1>
+    <p class="text-gray-500 text-sm mt-1">model: {{ model }}</p>
+  </div>
+  <div class="flex gap-3">
+    <span class="metric-badge text-sm px-3 py-1
+      {% if success %}bg-green-900 text-green-300{% else %}bg-red-900 text-red-300{% endif %}">
+      {% if success %}PASS{% else %}FAIL{% endif %}
+    </span>
+    <span class="metric-badge bg-gray-800 text-gray-300 text-sm px-3 py-1">
+      credit = {{ "%.2f"|format(partial_credit) }}
+    </span>
+    {% if cost_usd > 0 %}
+    <span class="metric-badge bg-gray-800 text-gray-400 text-sm px-3 py-1">
+      ${{ "%.4f"|format(cost_usd) }}
+    </span>
+    {% endif %}
+    <span class="metric-badge bg-gray-800 text-gray-400 text-sm px-3 py-1">
+      {{ "%.1f"|format(wall_seconds) }}s
+    </span>
+  </div>
+</div>
+
+<div class="space-y-3">
+  {% for event in events %}
+  <div class="rounded-lg border
+    {% if event.event_type == 'run_start' %}border-indigo-800 bg-indigo-950
+    {% elif event.event_type == 'run_end' %}border-indigo-800 bg-indigo-950
+    {% elif event.event_type == 'message' and event.data.role == 'system' %}border-gray-800 bg-gray-900 opacity-60
+    {% elif event.event_type == 'message' and event.data.role == 'user' %}border-blue-800 bg-blue-950
+    {% elif event.event_type == 'message' and event.data.role == 'assistant' %}border-gray-700 bg-gray-900
+    {% elif event.event_type == 'tool_call' %}border-amber-800 bg-amber-950
+    {% elif event.event_type == 'tool_result' %}border-green-800 bg-green-950
+    {% else %}border-gray-800 bg-gray-900
+    {% endif %} p-4">
+
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs font-mono font-semibold uppercase tracking-wider
+        {% if event.event_type == 'tool_call' %}text-amber-400
+        {% elif event.event_type == 'tool_result' %}text-green-400
+        {% elif event.event_type in ('run_start', 'run_end') %}text-indigo-400
+        {% elif event.data.role == 'user' %}text-blue-400
+        {% elif event.data.role == 'assistant' %}text-gray-300
+        {% else %}text-gray-500{% endif %}">
+        {% if event.event_type == 'message' %}{{ event.data.role }}
+        {% else %}{{ event.event_type }}{% endif %}
+      </span>
+      <span class="text-xs text-gray-600 ml-auto font-mono">{{ event.timestamp | ts }}</span>
+    </div>
+
+    {% if event.event_type == 'message' %}
+      <div class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ event.data.content[:2000] }}</div>
+      {% if event.data.tool_calls %}
+        <div class="mt-2 text-xs text-amber-400 font-mono">
+          Tool calls: {{ event.data.tool_calls | length }}
+        </div>
+      {% endif %}
+
+    {% elif event.event_type == 'tool_call' %}
+      <div class="font-mono text-sm">
+        <span class="text-amber-300 font-semibold">{{ event.data.name }}</span>
+        <span class="text-gray-500">(</span>
+        <span class="text-gray-300">{{ event.data.args | tojson }}</span>
+        <span class="text-gray-500">)</span>
+      </div>
+
+    {% elif event.event_type == 'tool_result' %}
+      <div class="font-mono text-xs text-green-300 whitespace-pre-wrap break-words">{{ event.data.result }}</div>
+      {% if event.data.error %}
+        <span class="text-red-400 text-xs">ERROR</span>
+      {% endif %}
+
+    {% elif event.event_type == 'run_start' %}
+      <div class="text-xs text-gray-400 font-mono">
+        task_id={{ event.data.task_id }} · k={{ event.data.k }}
+      </div>
+
+    {% elif event.event_type == 'run_end' %}
+      <div class="flex gap-6 text-xs font-mono">
+        <span class="{% if event.data.success %}text-green-400{% else %}text-red-400{% endif %}">
+          {% if event.data.success %}success{% else %}failed{% endif %}
+        </span>
+        <span class="text-gray-400">credit={{ "%.2f"|format(event.data.partial_credit) }}</span>
+        <span class="text-gray-400">tokens={{ event.data.total_tokens }}</span>
+        <span class="text-gray-400">${{ "%.4f"|format(event.data.cost_usd) }}</span>
+        <span class="text-gray-400">{{ "%.1f"|format(event.data.wall_seconds) }}s</span>
+      </div>
+      {% if event.data.error %}
+        <div class="mt-2 text-red-400 text-xs font-mono">{{ event.data.error }}</div>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

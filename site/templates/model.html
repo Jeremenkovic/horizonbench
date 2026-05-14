@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{{ model }} — {{ family }} | HorizonBench{% endblock %}
+{% block content %}
+
+<div class="mb-2">
+  <a href="index.html" class="text-gray-500 hover:text-gray-300 text-sm">← Leaderboard</a>
+</div>
+
+<div class="mb-8 flex items-start justify-between flex-wrap gap-4">
+  <div>
+    <h1 class="text-2xl font-bold text-white">{{ model }}</h1>
+    <p class="text-gray-400 mt-1">Family: <span class="text-indigo-400 font-mono">{{ family }}</span>
+      · {{ n_runs }} total runs</p>
+  </div>
+  <div class="flex gap-4">
+    <div class="text-center">
+      <div class="text-2xl font-bold font-mono
+        {% if rdc_auc >= 0.8 %}text-green-400{% elif rdc_auc >= 0.5 %}text-yellow-400{% else %}text-red-400{% endif %}">
+        {{ "%.3f"|format(rdc_auc) }}
+      </div>
+      <div class="text-xs text-gray-500 mt-1">RDC_AUC</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold font-mono text-amber-400">
+        {% if mop %}{{ mop }}{% else %}&gt;max{% endif %}
+      </div>
+      <div class="text-xs text-gray-500 mt-1">MOP</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold font-mono text-gray-300">
+        {% if gds_overall is not none %}{{ "%.3f"|format(gds_overall) }}{% else %}—{% endif %}
+      </div>
+      <div class="text-xs text-gray-500 mt-1">GDS overall</div>
+    </div>
+  </div>
+</div>
+
+<!-- Decay curve -->
+<div class="rounded-xl border border-gray-800 bg-gray-900 p-4 mb-8">
+  <h2 class="text-sm font-semibold text-gray-400 mb-4 uppercase tracking-wider">Reliability Decay Curve</h2>
+  <div id="rdc-chart" style="height:320px;"></div>
+</div>
+
+<!-- Per-k table -->
+<div class="rounded-xl border border-gray-800 overflow-hidden mb-8">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-900 text-gray-400 uppercase text-xs tracking-wider">
+      <tr>
+        <th class="px-4 py-3 text-left">k (steps)</th>
+        <th class="px-4 py-3 text-right">Runs</th>
+        <th class="px-4 py-3 text-right">RDC(k)</th>
+        <th class="px-4 py-3 text-right">VAF(k)</th>
+        <th class="px-4 py-3 text-right">GDS(k)</th>
+        <th class="px-4 py-3 text-right">Avg credit</th>
+        <th class="px-4 py-3 text-right">Avg cost</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for row in k_rows %}
+      <tr class="hover:bg-gray-900">
+        <td class="px-4 py-3 font-mono font-bold text-white">{{ row.k }}</td>
+        <td class="px-4 py-3 text-right text-gray-400">{{ row.n_runs }}</td>
+        <td class="px-4 py-3 text-right font-mono font-bold
+          {% if row.rdc >= 0.8 %}text-green-400{% elif row.rdc >= 0.5 %}text-yellow-400{% else %}text-red-400{% endif %}">
+          {{ "%.3f"|format(row.rdc) }}
+        </td>
+        <td class="px-4 py-3 text-right font-mono text-gray-300">
+          {% if row.vaf is not none %}{{ "%.2f"|format(row.vaf) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3 text-right font-mono text-gray-300">
+          {% if row.gds is not none %}{{ "%.3f"|format(row.gds) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3 text-right font-mono text-gray-400">{{ "%.3f"|format(row.avg_credit) }}</td>
+        <td class="px-4 py-3 text-right font-mono text-gray-400">
+          {% if row.avg_cost > 0 %}${{ "%.4f"|format(row.avg_cost) }}{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Traces -->
+{% if traces %}
+<div class="mb-4">
+  <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Failure Traces</h2>
+  <div class="space-y-2">
+    {% for t in traces %}
+    <a href="trace_{{ t.slug }}.html"
+      class="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900 px-4 py-3 hover:border-gray-600 transition-colors">
+      <div>
+        <span class="font-mono text-xs text-gray-400">{{ t.task_id }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="metric-badge {% if t.success %}bg-green-900 text-green-300{% else %}bg-red-900 text-red-300{% endif %}">
+          {% if t.success %}pass{% else %}fail{% endif %}
+        </span>
+        <span class="text-xs text-gray-500">credit={{ "%.2f"|format(t.partial_credit) }}</span>
+        <span class="text-indigo-400 text-xs">view →</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<script>
+const rdcData = {{ rdc_chart_json }};
+Plotly.newPlot('rdc-chart', [{
+  x: rdcData.k,
+  y: rdcData.rdc,
+  mode: 'lines+markers',
+  line: { color: '#818cf8', width: 2 },
+  marker: { size: 8, color: '#818cf8' },
+  name: 'RDC(k)',
+  hovertemplate: 'k=%{x}<br>success rate=%{y:.3f}<extra></extra>'
+}], {
+  paper_bgcolor: 'rgba(0,0,0,0)',
+  plot_bgcolor: 'rgba(0,0,0,0)',
+  font: { color: '#9ca3af', size: 12 },
+  xaxis: { title: 'Step count (k)', gridcolor: '#1f2937', linecolor: '#374151' },
+  yaxis: { title: 'Success rate', range: [0, 1.05], gridcolor: '#1f2937', linecolor: '#374151' },
+  margin: { t: 20, r: 20, b: 50, l: 60 },
+  shapes: [{ type: 'line', x0: rdcData.k[0], x1: rdcData.k[rdcData.k.length-1],
+    y0: 0.5, y1: 0.5, line: { color: '#ef4444', dash: 'dash', width: 1 } }]
+}, { responsive: true, displayModeBar: false });
+</script>
+
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}HorizonBench Leaderboard{% endblock %}
+{% block content %}
+
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-white mb-2">Leaderboard</h1>
+  <p class="text-gray-400 max-w-2xl">
+    Models ranked by <strong class="text-indigo-400">RDC_AUC</strong> — area under the reliability-decay curve
+    from k=5 to k=100. Higher = more reliable across horizons.
+    <strong class="text-amber-400">MOP</strong> = smallest step count where success rate drops below 50%.
+  </p>
+</div>
+
+<!-- Family filter -->
+<div class="mb-6 flex gap-2 flex-wrap">
+  <span class="text-gray-500 text-sm self-center">Filter:</span>
+  <button onclick="filterFamily('all')"
+    class="filter-btn px-3 py-1 rounded-full text-sm border border-indigo-500 text-indigo-400 hover:bg-indigo-900 active"
+    data-family="all">All families</button>
+  {% for fam in families %}
+  <button onclick="filterFamily('{{ fam }}')"
+    class="filter-btn px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-400 hover:bg-gray-800"
+    data-family="{{ fam }}">{{ fam }}</button>
+  {% endfor %}
+</div>
+
+{% if rows %}
+<div class="overflow-x-auto rounded-xl border border-gray-800">
+  <table class="w-full text-sm" id="leaderboard-table">
+    <thead class="bg-gray-900 text-gray-400 uppercase text-xs tracking-wider">
+      <tr>
+        <th class="px-4 py-3 text-left">#</th>
+        <th class="px-4 py-3 text-left">Model</th>
+        <th class="px-4 py-3 text-left">Family</th>
+        <th class="px-4 py-3 text-right cursor-pointer hover:text-white" onclick="sortTable('rdc_auc')">RDC_AUC ↕</th>
+        <th class="px-4 py-3 text-right cursor-pointer hover:text-white" onclick="sortTable('mop')">MOP ↕</th>
+        <th class="px-4 py-3 text-right">GDS</th>
+        <th class="px-4 py-3 text-right">Runs</th>
+        <th class="px-4 py-3 text-right">Avg cost/run</th>
+        <th class="px-4 py-3 text-left">Details</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for row in rows %}
+      <tr class="hover:bg-gray-900 transition-colors leaderboard-row" data-family="{{ row.family }}">
+        <td class="px-4 py-3 text-gray-500 font-mono">{{ loop.index }}</td>
+        <td class="px-4 py-3 font-semibold text-white">{{ row.model }}</td>
+        <td class="px-4 py-3">
+          <span class="metric-badge bg-gray-800 text-gray-300">{{ row.family }}</span>
+        </td>
+        <td class="px-4 py-3 text-right">
+          <span class="font-mono font-bold
+            {% if row.rdc_auc >= 0.8 %}text-green-400
+            {% elif row.rdc_auc >= 0.5 %}text-yellow-400
+            {% else %}text-red-400{% endif %}">
+            {{ "%.3f"|format(row.rdc_auc) }}
+          </span>
+        </td>
+        <td class="px-4 py-3 text-right font-mono text-gray-300">
+          {% if row.mop %}{{ row.mop }}{% else %}<span class="text-green-400">&gt;max</span>{% endif %}
+        </td>
+        <td class="px-4 py-3 text-right font-mono text-gray-400">
+          {% if row.gds is not none %}{{ "%.3f"|format(row.gds) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3 text-right text-gray-400">{{ row.n_runs }}</td>
+        <td class="px-4 py-3 text-right text-gray-400 font-mono">
+          {% if row.avg_cost > 0 %}${{ "%.3f"|format(row.avg_cost) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <a href="model_{{ row.model_slug }}_{{ row.family_slug }}.html"
+            class="text-indigo-400 hover:text-indigo-300 text-xs">decay curve →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="rounded-xl border border-gray-800 bg-gray-900 p-12 text-center text-gray-500">
+  No results yet. Run <code class="text-indigo-400">horizonbench run</code> to populate the leaderboard.
+</div>
+{% endif %}
+
+<script>
+function filterFamily(family) {
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.family === family);
+    b.classList.toggle('border-indigo-500', b.dataset.family === family);
+    b.classList.toggle('text-indigo-400', b.dataset.family === family);
+    b.classList.toggle('border-gray-600', b.dataset.family !== family);
+    b.classList.toggle('text-gray-400', b.dataset.family !== family);
+  });
+  document.querySelectorAll('.leaderboard-row').forEach(r => {
+    r.style.display = (family === 'all' || r.dataset.family === family) ? '' : 'none';
+  });
+}
+</script>
+
+{% endblock %}

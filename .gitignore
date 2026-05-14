@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Results (gitignore except sample)
+results/
+!results/.gitkeep
+
+# Generated task instances (large; published separately on HuggingFace)
+tasks/v1.0/
+
+# Site build output
+site/dist/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
