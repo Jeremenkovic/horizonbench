@@ -1,132 +1,145 @@
 # HorizonBench
 
 **Long-horizon agent reliability benchmark.**  
-Measures how success degrades as task length grows from 5 to 100+ steps, ranking frontier and open-weight models by *reliability* rather than peak capability.
+Measures how AI agent success rate decays as task length grows from 5 to 100+ steps — ranking models by *reliability* rather than peak capability.
 
 ---
 
-## Why
+## Install
 
-Dominant benchmarks (SWE-bench, GAIA) score on a single end-state. HorizonBench asks: **at what step count does the model's reliability collapse?** It exposes the gap between "smart on one shot" and "reliable for a 30-minute autonomous run."
+**Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) — install it first if you don't have it:**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then install HorizonBench as a global CLI tool:
+
+```bash
+uv tool install git+https://github.com/Jeremenkovic/horizonbench.git
+```
+
+Verify it works:
+
+```bash
+horizonbench
+```
+
+You should see a welcome screen with status checks and quick-start commands.
 
 ---
 
-## Metrics
+## Setup
 
-| Metric | Definition |
-|--------|-----------|
-| **RDC(k)** | Mean success rate at step count k |
-| **RDC_AUC** | Area under the decay curve, normalised to [0,1] |
-| **MOP** | Smallest k where RDC(k) < 0.5 ("meltdown onset point") |
-| **VAF(k)** | std(S(k)) / std(S(5)) — variance amplification vs. short tasks |
-| **GDS(k)** | Mean partial credit on *failed* runs — graceful degradation score |
+Configure your API key interactively:
+
+```bash
+horizonbench setup
+```
+
+Or set it manually as an environment variable:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic
+export OPENAI_API_KEY=sk-...          # OpenAI
+export GOOGLE_API_KEY=...             # Google
+```
 
 ---
 
-## Task families (v1)
+## Usage
+
+### Run a benchmark
+
+```bash
+horizonbench run --model claude-sonnet-4-6 --family multi-refactor --k 10 --n-runs 20
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--model` | Any LiteLLM model string | required |
+| `--family` | Task family ID | `multi-refactor` |
+| `--k` | Step count | `5` |
+| `--n-runs` | Number of independent runs | `1` |
+| `--sandbox` | `local` or `docker` | `local` |
+
+### View metrics
+
+```bash
+horizonbench metrics --model claude-sonnet-4-6 --family multi-refactor
+```
+
+### Export results (paste into any AI for analysis)
+
+```bash
+horizonbench export                          # print to terminal
+horizonbench export --output summary.md     # save as markdown
+horizonbench export --format json           # machine-readable
+```
+
+### Build the leaderboard site
+
+```bash
+horizonbench site --output-dir site/dist
+# then open site/dist/index.html
+```
+
+### List available task families
+
+```bash
+horizonbench list-families
+```
+
+---
+
+## Task families
 
 | ID | What the agent does | Step parameter |
 |----|---------------------|----------------|
-| `multi-refactor` | Rename snake_case to camelCase in k Python files | files |
+| `multi-refactor` | Rename snake_case → camelCase in k Python files | files |
 | `data-pipeline` | Execute k CSV transformation stages in sequence | stages |
 | `research-synth` | Extract facts from k sandboxed documents | documents |
 | `constraint-plan` | Schedule tasks satisfying k constraints | constraints |
 
 ---
 
-## Quick start
+## Metrics
+
+| Metric | Meaning |
+|--------|---------|
+| **RDC(k)** | Success rate at step count k |
+| **RDC_AUC** | Area under the decay curve — overall reliability score (higher = better) |
+| **MOP** | Step count where success first drops below 50% — meltdown onset point (higher = better) |
+| **VAF(k)** | Variance amplification vs. short tasks |
+| **GDS(k)** | Mean partial credit on failed runs — how gracefully the model degrades |
+
+---
+
+## Supported models
+
+Any model supported by [LiteLLM](https://docs.litellm.ai/docs/providers) works out of the box:
 
 ```bash
-# Install
-pip install uv
-uv sync
+# Anthropic
+horizonbench run --model claude-sonnet-4-6 --family multi-refactor --k 10
 
-# Run one model on one task family
-export ANTHROPIC_API_KEY=sk-ant-...
-uv run horizonbench run \
-  --model claude-sonnet-4-6 \
-  --family multi-refactor \
-  --k 10 \
-  --n-runs 5
-
-# View metrics from the results DB
-uv run horizonbench metrics \
-  --model claude-sonnet-4-6 \
-  --family multi-refactor
-
-# Generate a frozen task set (560 tasks)
-uv run horizonbench generate generate \
-  --release v1.0 \
-  --out-dir tasks/
-
-# List available task families
-uv run horizonbench list-families
-```
-
----
-
-## Repo structure
-
-```
-horizonbench/
-  cli.py                   Typer CLI (run / metrics / list-families)
-  generate.py              Task set generator (horizonbench generate)
-  adapters/
-    base.py                ModelAdapter ABC
-    litellm.py             LiteLLM unified adapter (all cloud models)
-    local.py               vLLM / Ollama adapters
-  tasks/
-    base.py                Task ABC, Checkpoint, RunResult
-    multi_refactor/        Python code refactoring
-    data_pipeline/         CSV ETL pipeline
-    research_synth/        Document fact extraction
-    constraint_plan/       Constraint satisfaction scheduling
-  sandbox/
-    runner.py              Docker SDK runner + local tool handler
-    mock_servers/
-      doc_server.py        FastAPI mock document server
-  metrics/
-    rdc.py                 Reliability Decay Curve
-    vaf.py                 Variance Amplification Factor
-    gds.py                 Graceful Degradation Score
-    mop.py                 Meltdown Onset Point
-  results/
-    store.py               DuckDB results store
-    trace.py               JSONL trace writer
-tasks/v1.0/                Frozen task instances (generated)
-results/                   Run outputs (gitignored)
-tests/                     129 unit tests
-```
-
----
-
-## Methodology rules
-
-1. No prompt tuning per model — one system prompt template per family.
-2. No re-runs on failure — first N runs are the results.
-3. Fixed seeds per release — same tasks for every model.
-4. Quarterly test-set rotation — seeds published on rotation.
-5. Failure traces are public — every failure has a linkable trace.
-6. Inference provider is part of model identity.
-7. Vendor pre-publication review window — 5 business days.
-8. Reproducibility — anyone with the repo can reproduce any row.
-
----
-
-## Adding a new model
-
-Any model accessible via LiteLLM works out of the box:
-
-```bash
 # OpenAI
-uv run horizonbench run --model gpt-4o --family multi-refactor --k 10
+horizonbench run --model gpt-4o --family multi-refactor --k 10
 
 # Google
-uv run horizonbench run --model gemini/gemini-2.0-flash --k 10
+horizonbench run --model gemini/gemini-2.0-flash --family multi-refactor --k 10
 
-# Local vLLM
-uv run horizonbench run --model openai/llama-3-70b --k 10
+# Local (Ollama)
+horizonbench run --model ollama/llama3 --family multi-refactor --k 10
 ```
+
+---
+
+## Why
+
+Most benchmarks (SWE-bench, MMLU, GAIA) measure a single end-state. They don't show how reliability *degrades* as tasks get longer. HorizonBench asks: **at what step count does the model start failing?**
+
+This matters for anyone building autonomous agents — a model that scores 95% at k=5 might be at 20% by k=30.
 
 ---
 
