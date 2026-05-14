@@ -52,57 +52,121 @@ _BANNER = """\
 |  _  | (_) | |  | |/ / (_) | | | |  | |_) |  __/ | | | (__| | | |
 |_| |_|\\___/|_|  |_/___\\___/|_| |_|  |____/ \\___|_| |_|\\___|_| |_|"""
 
+_PROVIDERS = {
+    "ANTHROPIC_API_KEY":  ("Anthropic",  "sk-ant-...",  "claude-sonnet-4-6"),
+    "OPENAI_API_KEY":     ("OpenAI",     "sk-...",      "gpt-4o"),
+    "GOOGLE_API_KEY":     ("Google",     "AIza...",     "gemini/gemini-2.0-flash"),
+    "MISTRAL_API_KEY":    ("Mistral",    "...",         "mistral/mistral-large-latest"),
+}
+
+
+def _detect_provider() -> tuple[str, str] | None:
+    """Return (provider_name, model_suggestion) for the first configured key."""
+    for env_var, (name, _, model) in _PROVIDERS.items():
+        if os.environ.get(env_var):
+            return name, model
+    return None
+
 
 def _print_welcome() -> None:
     console.print()
     console.print(Text(_BANNER, style="bold cyan"))
-    console.print(
-        Text("  Long-horizon agent reliability benchmark  v0.1.0", style="dim"),
-        justify="left",
-    )
+    console.print(Text("  Long-horizon agent reliability benchmark  v0.1.0", style="dim"))
     console.print()
 
-    # ── status checks ────────────────────────────────────────────────────────
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    env_file = Path(__file__).parent.parent / ".env"
+    # ── gather state ──────────────────────────────────────────────────────────
+    provider = _detect_provider()
     db_path = Path("results/horizonbench.duckdb")
-
-    rows = []
-    rows.append(("horizonbench installed", True, ""))
-    rows.append(("API key configured", bool(api_key), "run: horizonbench setup" if not api_key else ""))
-    rows.append(("Results DB exists", db_path.exists(), "no runs yet" if not db_path.exists() else str(db_path)))
-
+    n_runs = 0
+    n_models = 0
     if db_path.exists():
         try:
-            from horizonbench.results.store import ResultStore
             with ResultStore(db_path) as store:
                 runs = store.get_runs()
-            n = len(runs)
-            rows.append((f"Runs recorded", True, f"{n} total"))
+                n_runs = len(runs)
+                n_models = len({r["model"] for r in runs})
         except Exception:
             pass
 
+    # ── status panel ──────────────────────────────────────────────────────────
     status_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
-    status_table.add_column(width=3)
-    status_table.add_column(width=32)
-    status_table.add_column(style="dim")
-    for label, ok, hint in rows:
-        icon = Text("✓", style="bold green") if ok else Text("✗", style="bold red")
-        status_table.add_row(icon, label, hint)
+    status_table.add_column(width=3, no_wrap=True)
+    status_table.add_column(width=24, no_wrap=True)
+    status_table.add_column(style="dim", no_wrap=True)
+
+    status_table.add_row(
+        Text("✓", style="bold green"),
+        "installed", "horizonbench v0.1.0",
+    )
+    if provider:
+        status_table.add_row(
+            Text("✓", style="bold green"),
+            "API key configured", f"{provider[0]}  →  suggested model: {provider[1]}",
+        )
+    else:
+        status_table.add_row(
+            Text("✗", style="bold red"),
+            "API key missing", "run:  horizonbench setup",
+        )
+    if n_runs:
+        status_table.add_row(
+            Text("✓", style="bold green"),
+            "results recorded", f"{n_runs} runs across {n_models} model(s)",
+        )
+    else:
+        status_table.add_row(
+            Text("–", style="dim"),
+            "no runs yet", "see recommendation below",
+        )
 
     console.print(Panel(status_table, title="[bold]Status[/bold]", border_style="cyan", padding=(0, 1)))
 
-    # ── quick start ───────────────────────────────────────────────────────────
+    # ── contextual recommendation ─────────────────────────────────────────────
+    if not provider:
+        console.print(Panel(
+            "[bold yellow] Next step:[/bold yellow]  Configure your API key\n\n"
+            " [cyan]horizonbench setup[/cyan]\n\n"
+            " [dim]Supports Anthropic, OpenAI, Google, Mistral and any LiteLLM provider.[/dim]",
+            border_style="yellow", padding=(0, 1),
+        ))
+    elif n_runs == 0:
+        model = provider[1]
+        console.print(Panel(
+            "[bold yellow] Next step:[/bold yellow]  Run your first benchmark\n\n"
+            f" [cyan]horizonbench run --model {model} --family multi-refactor --k 5 --n-runs 5[/cyan]\n\n"
+            " [dim]Tip:[/dim] [dim]k=5 is fast (~1 min). Then try k=20, k=50 to find where the model fails.[/dim]",
+            border_style="yellow", padding=(0, 1),
+        ))
+    else:
+        k_values_done = set()
+        try:
+            with ResultStore(db_path) as store:
+                for r in store.get_runs():
+                    k_values_done.add(r["k"])
+        except Exception:
+            pass
+        max_k = max(k_values_done) if k_values_done else 5
+        next_k = {5: 10, 10: 20, 20: 50, 50: 100}.get(max_k, max_k * 2)
+        model = provider[1]
+        console.print(Panel(
+            f"[bold yellow] Recommendation:[/bold yellow]  You've reached k={max_k} — push to k={next_k} to find the meltdown point\n\n"
+            f" [cyan]horizonbench run --model {model} --family multi-refactor --k {next_k} --n-runs 10[/cyan]\n\n"
+            f" Then view:   [cyan]horizonbench metrics --model {model} --family multi-refactor[/cyan]\n"
+            f" Or export:   [cyan]horizonbench export --output summary.md[/cyan]",
+            border_style="yellow", padding=(0, 1),
+        ))
+
+    # ── all commands ──────────────────────────────────────────────────────────
     qs = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
-    qs.add_column(style="bold green", no_wrap=True)
     qs.add_column(style="cyan", no_wrap=True)
     qs.add_column(style="dim", no_wrap=True)
-    qs.add_row("$", "horizonbench setup", "→ configure API key interactively")
-    qs.add_row("$", "horizonbench run --model claude-sonnet-4-6 --family multi-refactor --k 5", "→ run first benchmark")
-    qs.add_row("$", "horizonbench list-families", "→ see all task families")
-    qs.add_row("$", "horizonbench export --output summary.md", "→ export results for AI analysis")
-    qs.add_row("$", "horizonbench site --output-dir site/dist", "→ build leaderboard site")
-    console.print(Panel(qs, title="[bold]Quick start[/bold]", border_style="cyan", padding=(0, 1)))
+    qs.add_row("horizonbench setup", "configure API key interactively")
+    qs.add_row("horizonbench run --model <model> --family <family> --k <k>", "run a benchmark")
+    qs.add_row("horizonbench metrics --model <model> --family <family>", "view RDC / MOP / GDS table")
+    qs.add_row("horizonbench export [--output summary.md]", "export results for AI analysis")
+    qs.add_row("horizonbench list-families", "show all task families")
+    qs.add_row("horizonbench site --output-dir site/dist", "build leaderboard site")
+    console.print(Panel(qs, title="[bold]Commands[/bold]", border_style="cyan", padding=(0, 1)))
     console.print()
 
 
@@ -526,63 +590,118 @@ def export_summary(
 
 @app.command("setup")
 def setup() -> None:
-    """Interactive setup — configure API key and verify installation."""
-    _print_welcome()
-
-    console.print("[bold cyan]Setup wizard[/bold cyan]\n")
+    """Interactive setup — choose provider, configure API key, verify install."""
+    console.print()
+    console.print(Text(_BANNER, style="bold cyan"))
+    console.print(Text("  Setup Wizard\n", style="bold"))
 
     env_file = Path(__file__).parent.parent / ".env"
-    existing_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    existing_lines: list[str] = []
+    if env_file.exists():
+        existing_lines = [l for l in env_file.read_text().splitlines() if l.strip() and not l.startswith("#")]
+
+    # ── step 1: choose provider ───────────────────────────────────────────────
+    console.print(Panel(
+        "[bold]Step 1 of 3[/bold] — Choose your AI provider\n\n"
+        "[cyan]1[/cyan]  Anthropic  (claude-sonnet-4-6, claude-opus-4-7)      [dim]Recommended[/dim]\n"
+        "[cyan]2[/cyan]  OpenAI     (gpt-4o, o3-mini)\n"
+        "[cyan]3[/cyan]  Google     (gemini-2.0-flash, gemini-2.5-pro)\n"
+        "[cyan]4[/cyan]  Mistral    (mistral-large, codestral)\n"
+        "[cyan]5[/cyan]  Other      (any LiteLLM-supported provider)\n",
+        border_style="cyan", padding=(0, 2),
+    ))
+
+    choice = typer.prompt("  Your choice [1-5]", default="1")
+    provider_map = {
+        "1": ("ANTHROPIC_API_KEY",  "Anthropic",  "sk-ant-",  "claude-sonnet-4-6"),
+        "2": ("OPENAI_API_KEY",     "OpenAI",     "sk-",      "gpt-4o"),
+        "3": ("GOOGLE_API_KEY",     "Google",     "AIza",     "gemini/gemini-2.0-flash"),
+        "4": ("MISTRAL_API_KEY",    "Mistral",    "",         "mistral/mistral-large-latest"),
+        "5": ("CUSTOM_API_KEY",     "Custom",     "",         ""),
+    }
+    env_var, provider_name, key_prefix, suggested_model = provider_map.get(choice, provider_map["1"])
+
+    console.print()
+
+    # ── step 2: API key ───────────────────────────────────────────────────────
+    existing_key = os.environ.get(env_var, "")
+    console.print(Panel(
+        f"[bold]Step 2 of 3[/bold] — Enter your {provider_name} API key\n\n"
+        f"  Get your key at:\n"
+        f"  [dim]Anthropic → console.anthropic.com/settings/keys[/dim]\n"
+        f"  [dim]OpenAI    → platform.openai.com/api-keys[/dim]\n"
+        f"  [dim]Google    → aistudio.google.com/app/apikey[/dim]",
+        border_style="cyan", padding=(0, 2),
+    ))
 
     if existing_key:
-        console.print(f"[green]✓[/green]  ANTHROPIC_API_KEY already set ({existing_key[:12]}...)\n")
-        change = typer.confirm("  Change it?", default=False)
+        console.print(f"  [green]✓[/green]  {env_var} already set ({existing_key[:14]}...)")
+        change = typer.confirm("  Replace it?", default=False)
         if not change:
-            console.print("[dim]  Keeping existing key.[/dim]")
-            _finish_setup()
-            return
+            console.print("  [dim]Keeping existing key.[/dim]")
+            key = existing_key
+        else:
+            key = typer.prompt(f"  Paste your {provider_name} API key", hide_input=True)
+    else:
+        key = typer.prompt(f"  Paste your {provider_name} API key", hide_input=True)
 
-    key = typer.prompt("  Paste your Anthropic API key (sk-ant-...)", hide_input=True)
-    if not key.startswith("sk-"):
-        console.print("[yellow]  Warning: key doesn't look like an Anthropic key (should start with sk-).[/yellow]")
+    if key_prefix and not key.startswith(key_prefix):
+        console.print(f"  [yellow]⚠[/yellow]  Key doesn't start with '{key_prefix}' — double-check it's the right provider.")
+    else:
+        console.print(f"  [green]✓[/green]  Key looks good.")
 
-    # Write to .env
-    env_file.write_text(f"ANTHROPIC_API_KEY={key}\n")
-    os.environ["ANTHROPIC_API_KEY"] = key
-    console.print(f"[green]✓[/green]  Saved to {env_file}\n")
+    # Persist to .env (keep other lines, replace/add this one)
+    other_lines = [l for l in existing_lines if not l.startswith(f"{env_var}=")]
+    other_lines.append(f"{env_var}={key}")
+    env_file.write_text("\n".join(other_lines) + "\n")
+    os.environ[env_var] = key
+    console.print(f"  [dim]Saved to {env_file}[/dim]")
+    console.print()
 
-    _finish_setup()
+    # ── step 3: verify + first run suggestion ────────────────────────────────
+    console.print(Panel(
+        "[bold]Step 3 of 3[/bold] — Verifying installation",
+        border_style="cyan", padding=(0, 2),
+    ))
+    console.print()
 
-
-def _finish_setup() -> None:
-    console.print("[bold]Verifying installation...[/bold]\n")
-
-    steps = [
-        ("Import horizonbench.cli", lambda: __import__("horizonbench.cli")),
-        ("Import horizonbench.tasks", lambda: __import__("horizonbench.tasks.base")),
-        ("Import horizonbench.metrics", lambda: __import__("horizonbench.metrics")),
-        ("Import horizonbench.results", lambda: __import__("horizonbench.results.store")),
+    checks = [
+        ("Core tasks",   "horizonbench.tasks.base"),
+        ("Metrics",      "horizonbench.metrics"),
+        ("Results DB",   "horizonbench.results.store"),
+        ("Site builder", "horizonbench.site"),
     ]
     all_ok = True
-    for label, fn in steps:
+    for label, module in checks:
         try:
-            fn()
+            __import__(module)
             console.print(f"  [green]✓[/green]  {label}")
         except Exception as e:
-            console.print(f"  [red]✗[/red]  {label} — {e}")
+            console.print(f"  [red]✗[/red]  {label}  [dim]{e}[/dim]")
             all_ok = False
 
     console.print()
     if all_ok:
+        run_cmd = (
+            f"horizonbench run --model {suggested_model} --family multi-refactor --k 5 --n-runs 5"
+            if suggested_model else
+            "horizonbench run --model <your-model> --family multi-refactor --k 5 --n-runs 5"
+        )
         console.print(Panel(
-            "[bold green]HorizonBench is ready![/bold green]\n\n"
-            "Run your first benchmark:\n"
-            "[cyan]  horizonbench run --model claude-sonnet-4-6 --family multi-refactor --k 5[/cyan]",
-            border_style="green",
-            padding=(1, 2),
+            "[bold green]  HorizonBench is ready![/bold green]\n\n"
+            "  Run your first benchmark (k=5 is a good starting point):\n\n"
+            f"  [cyan]{run_cmd}[/cyan]\n\n"
+            "  [dim]Tip: once that works, increase --k to 10, 20, 50 to find where the model starts failing.[/dim]\n"
+            "  [dim]Tip: run horizonbench at any time to see your progress and next-step recommendations.[/dim]",
+            border_style="green", padding=(0, 2),
         ))
     else:
-        console.print("[red]Some checks failed. Try reinstalling:[/red]  uv tool install . --force")
+        console.print(Panel(
+            "[red]  Some checks failed.[/red]\n\n"
+            "  Try reinstalling:\n"
+            "  [cyan]uv tool install git+https://github.com/Jeremenkovic/horizonbench.git --force[/cyan]",
+            border_style="red", padding=(0, 2),
+        ))
 
 
 if __name__ == "__main__":
